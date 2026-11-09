@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Milk Center – 10 Days Bill Calculation</title>
+<style>
+:root{--green:#176b49;--dark:#104b35;--pale:#eaf4ed;--line:#d8e4dc;--ink:#1e2b23;--muted:#64736a;--red:#b42318}
+*{box-sizing:border-box}body{margin:0;background:#f4f7f5;color:var(--ink);font:15px Arial,sans-serif}
+header{background:linear-gradient(120deg,#104b35,#18835a);color:#fff;padding:24px max(18px,calc((100% - 1180px)/2))}
+header h1{margin:0 0 7px;font-size:27px}header p{margin:0;color:#dcefe4}
+main{max-width:1180px;margin:22px auto;padding:0 15px}.panel{background:white;border:1px solid var(--line);border-radius:13px;padding:19px;margin-bottom:16px;box-shadow:0 4px 16px #123b2710}
+h2{font-size:19px;color:var(--dark);margin:0 0 13px}h3{font-size:16px;margin:0 0 10px}
+p.help{font-size:13px;color:var(--muted);line-height:1.5}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:13px}
+.upload{border:1px dashed #9db9a7;border-radius:10px;padding:14px;background:#f9fcfa}
+label{display:block;font-size:13px;font-weight:bold;color:#52665a;margin:8px 0 5px}
+input,select,textarea{font:14px Arial;width:100%;padding:9px;border:1px solid #cbd9d0;border-radius:7px;background:#fff;color:var(--ink)}
+textarea{min-height:130px;resize:vertical}.row{display:flex;gap:10px;align-items:end;flex-wrap:wrap}.field{flex:1;min-width:145px}
+button{border:0;border-radius:8px;padding:10px 14px;background:var(--green);color:white;font-weight:bold;cursor:pointer;margin:4px 4px 4px 0}
+button.alt{background:#e7f1ea;color:var(--dark)}button.red{background:#fff0ef;color:var(--red)}button:disabled{opacity:.5;cursor:wait}
+.status{padding:10px 12px;border-radius:8px;background:#edf6ef;margin-top:9px;font-size:13px;line-height:1.5}.warn{background:#fff6e5;color:#795500}.error{background:#fff0ef;color:var(--red)}
+.rate-table-wrap,.table-wrap{overflow:auto;margin-top:10px;max-height:320px;border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%;min-width:650px}th,td{padding:8px;border-bottom:1px solid var(--line);text-align:center;font-size:13px}th{background:#edf5ef;color:#355b47;position:sticky;top:0}
+td input{padding:6px;min-width:66px}.supplier{border:1px solid var(--line);border-radius:10px;padding:14px;margin:12px 0}
+.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:10px}.metric{background:var(--pale);padding:13px;border-radius:9px}.metric small{color:#587263}.metric strong{display:block;font-size:21px;color:var(--dark);margin-top:6px}
+.bad{color:var(--red);font-weight:bold}.good{color:var(--green);font-weight:bold}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.hidden{display:none}
+@media print{header,.no-print,button{display:none!important}body{background:#fff}.panel,.supplier{box-shadow:none;break-inside:avoid}main{max-width:none;margin:0;padding:0}.table-wrap,.rate-table-wrap{overflow:visible;max-height:none}table{min-width:0}input,select{border:0;padding:0}}
+</style></head>
+<body>
+<header><h1>Milk Center – 10 Days Bill Calculation</h1><p>Upload your latest rate charts • Verify rates • Calculate supplier bills</p></header>
+<main>
+<section class="panel">
+<h2>1. Upload your latest rate charts</h2>
+<p class="help">Upload the current Buffalo and Cow charts whenever they change. Excel/CSV files are read directly and are fastest. Photos and PDFs use OCR. Extracted rates appear below for checking and correction before billing.</p>
+<div class="grid">
+<div class="upload"><h3>Buffalo Milk (BM) Chart</h3><label for="bmFile">Select image, PDF, Excel or CSV</label><input id="bmFile" type="file" accept="image/*,.pdf,.xlsx,.xls,.csv"><button id="bmRead">Read Buffalo Chart</button><div id="bmStatus" class="status">No chart selected.</div><div id="bmEditor"></div></div>
+<div class="upload"><h3>Cow Milk (CM) Chart</h3><label for="cmFile">Select image, PDF, Excel or CSV</label><input id="cmFile" type="file" accept="image/*,.pdf,.xlsx,.xls,.csv"><button id="cmRead">Read Cow Chart</button><div id="cmStatus" class="status">No chart selected.</div><div id="cmEditor"></div></div>
+</div>
+<div class="status warn">Important: OCR may confuse digits. Always compare the extracted table with your uploaded chart. Missing/unclear rates are not estimated. For the most reliable and fastest import, upload Excel or CSV.</div>
+</section>
+<section class="panel no-print"><h2>2. Supplier setup</h2><div class="row"><div class="field"><label for="supplierCount">Number of suppliers</label><input id="supplierCount" type="number" min="1" max="200" value="1"></div><button id="createSuppliers">Create / Reset Suppliers</button><button class="alt" id="addSupplier">+ Add Supplier</button></div><p class="help">Enter the number of suppliers and click Create / Reset Suppliers. Use Add Supplier to add one more without deleting existing entries.</p></section>
+<section class="panel"><h2>3. Daily supplier entries</h2><div id="suppliers"></div></section>
+<section class="panel"><h2>4. Final 10-day report</h2><div class="metrics" id="metrics"></div><div class="table-wrap" id="summaryTable"></div><div class="actions no-print"><button id="printAll">Print / Save Final Report as PDF</button></div><p class="help">In the print window, choose “Save as PDF” as the printer/destination.</p></section>
+</main>
+<script>
+(() => {
+'use strict';
+let buffaloRates = new Map();
+let cowRates = new Map();
+let suppliers = [];
+const $ = id => document.getElementById(id);
+const fmt = n => '₹' + Number(n || 0).toFixed(2);
+const round1 = n => Math.round(Number(n) * 10) / 10;
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function setStatus(type, message, mode='ok') {
+  const el = $(type+'Status'); el.className = 'status' + (mode==='warn'?' warn':mode==='error'?' error':''); el.textContent = message;
+}
+function loadScript(src) {
+  return new Promise((resolve,reject) => {
+    const existing = [...document.scripts].find(s => s.src === src);
+    if (existing) { if (window.Tesseract || window.pdfjsLib || window.XLSX) return resolve(); existing.addEventListener('load',resolve,{once:true}); existing.addEventListener('error',reject,{once:true}); return; }
+    const s=document.createElement('script'); s.src=src; s.onload=resolve; s.onerror=()=>reject(new Error('Could not load required reader library. Check your internet connection and try again.')); document.head.appendChild(s);
+  });
+}
+function addBM(f,r) { f=round1(f); r=Number(r); if(Number.isFinite(f)&&Number.isFinite(r)&&f>0&&r>0) buffaloRates.set(f,r); }
+function addCM(f,s,r) { f=round1(f); s=round1(s); r=Number(r); if([f,s,r].every(Number.isFinite)&&f>0&&s>0&&r>0) cowRates.set(f+'|'+s,r); }
+function parseSpreadsheet(type, rows) {
+  const target=type==='bm'?buffaloRates:cowRates; target.clear();
+  let hi=rows.findIndex(row=>row.some(v=>String(v??'').trim().toUpperCase()==='FAT' || String(v??'').trim().toUpperCase().includes('FAT')));
+  if(hi<0) throw new Error('Could not find a FAT column heading in this sheet.');
+  const headers=rows[hi].map(v=>String(v??'').trim().toUpperCase());
+  const fi=headers.findIndex(v=>v.includes('FAT'));
+  const ri=headers.findIndex(v=>v==='RATE'||v.includes('RATE'));
+  const si=headers.findIndex(v=>v.includes('SNF'));
+  if(ri>=0) {
+    for(let i=hi+1;i<rows.length;i++) {
+      const row=rows[i]; if(type==='bm') addBM(Number(row[fi]),Number(row[ri]));
+      else if(si>=0) addCM(Number(row[fi]),Number(row[si]),Number(row[ri]));
+    }
+  } else if(type==='cm') {
+    const snfCols=headers.map((v,i)=>({i,n:Number(v)})).filter(x=>Number.isFinite(x.n)&&x.n>=6&&x.n<=10);
+    if(!snfCols.length) throw new Error('Cow matrix needs SNF values across the column headings.');
+    for(let i=hi+1;i<rows.length;i++) for(const col of snfCols) addCM(Number(rows[i][fi]),col.n,Number(rows[i][col.i]));
+  } else throw new Error('Buffalo sheet needs FAT and RATE columns.');
+  if(!target.size) throw new Error('No valid rates were found. Check the sheet headings and values.');
+}
+function numbers(line) { return (line.match(/\d+(?:\.\d+)?/g)||[]).map(Number); }
+function parseOCR(type,text) {
+  const target=type==='bm'?buffaloRates:cowRates; target.clear();
+  const lines=text.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+  if(type==='bm') {
+    // Buffalo chart may show multiple FAT/RATE pairs across one printed row.
+    for(const line of lines) {
+      const a=numbers(line);
+      for(let i=0;i+1<a.length;i+=2) if(a[i]>=4&&a[i]<=12&&a[i+1]>=20&&a[i+1]<=150) addBM(a[i],a[i+1]);
+    }
+  } else {
+    // Cow matrix: header contains FAT followed by SNF headings; each data row is FAT then one rate per SNF.
+    let headIndex=-1, snfs=[];
+    for(let i=0;i<lines.length;i++) {
+      const a=numbers(lines[i]);
+      if(/\bFAT\b/i.test(lines[i]) && a.length>=3 && a.some(n=>n>=7&&n<=9)) { headIndex=i; snfs=a.filter(n=>n>=7&&n<=9); break; }
+    }
+    if(headIndex>=0 && snfs.length>=3) {
+      for(let i=headIndex+1;i<lines.length;i++) {
+        const a=numbers(lines[i]);
+        if(a.length>=snfs.length+1 && a[0]>=2.5 && a[0]<=6) {
+          const fat=a[0], vals=a.slice(1);
+          snfs.forEach((snf,j)=>{ if(vals[j]>=10&&vals[j]<=150) addCM(fat,snf,vals[j]); });
+        }
+      }
+    } else {
+      // Also accept explicit text rows: FAT SNF RATE.
+      for(const line of lines) { const a=numbers(line); if(a.length===3&&a[0]>=2.5&&a[0]<=6&&a[1]>=6.5&&a[1]<=10&&a[2]>=10&&a[2]<=150) addCM(a[0],a[1],a[2]); }
+    }
+  }
+  if(!target.size) throw new Error(type==='cm'?'Could not detect the cow matrix structure. Use the editable text box to correct OCR or upload Excel/CSV.':'Could not detect FAT/RATE pairs. Try a clearer, straight photo or upload Excel/CSV.');
+}
+function renderRateEditor(type) {
+  const target=type==='bm'?buffaloRates:cowRates;
+  const entries=[...target.entries()].sort((a,b)=>Number(String(a[0]).split('|')[0])-Number(String(b[0]).split('|')[0])||Number(String(a[0]).split('|')[1]||0)-Number(String(b[0]).split('|')[1]||0));
+  const root=$(type+'Editor');
+  if(!entries.length){root.innerHTML='<p class="bad">No rate entries extracted. Upload a clearer chart or an Excel/CSV file.</p>';return;}
+  root.innerHTML='<p class="help"><b>'+entries.length+' rates extracted.</b> Check and edit the values below. Changes apply immediately.</p><div class="rate-table-wrap"><table><thead><tr><th>Fat %</th>'+(type==='cm'?'<th>SNF</th>':'')+'<th>Given Value</th><th>Remove</th></tr></thead><tbody>'+entries.map(([key,val])=>{const parts=String(key).split('|');return '<tr><td><input type="number" step=".1" data-type="'+type+'" data-key="'+key+'" data-field="fat" value="'+parts[0]+'"></td>'+(type==='cm'?'<td><input type="number" step=".1" data-type="cm" data-key="'+key+'" data-field="snf" value="'+parts[1]+'"></td>':'')+'<td><input type="number" step=".01" data-type="'+type+'" data-key="'+key+'" data-field="rate" value="'+Number(val).toFixed(2)+'"></td><td><button class="red" data-delete="'+type+'" data-key="'+key+'">Delete</button></td></tr>';}).join('')+'</tbody></table></div><div class="actions"><button class="alt" id="'+type+'AddRow">+ Add rate row</button></div>';
+  root.querySelectorAll('input[data-field]').forEach(input=>input.addEventListener('change',()=>editRate(input)));
+  root.querySelectorAll('button[data-delete]').forEach(btn=>btn.addEventListener('click',()=>{target.delete(btn.dataset.key);renderRateEditor(type);renderSuppliers();}));
+  $(type+'AddRow').addEventListener('click',()=>addRateRow(type));
+}
+function editRate(input) {
+  const type=input.dataset.type, map=type==='bm'?buffaloRates:cowRates, oldKey=input.dataset.key;
+  const row=input.closest('tr'), vals={fat:Number(row.querySelector('[data-field="fat"]').value),rate:Number(row.querySelector('[data-field="rate"]').value)};
+  if(type==='cm') vals.snf=Number(row.querySelector('[data-field="snf"]').value);
+  map.delete(oldKey);
+  if(type==='bm') addBM(vals.fat,vals.rate); else addCM(vals.fat,vals.snf,vals.rate);
+  renderRateEditor(type); renderSuppliers();
+}
+function addRateRow(type) {
+  const f=prompt('Enter FAT value (example: 4.5)'); if(f===null)return;
+  const r=type==='bm'?null:prompt('Enter SNF value (example: 8.0)');
+  if(type==='cm'&&r===null)return;
+  const v=prompt('Enter exact chart rate'); if(v===null)return;
+  if(type==='bm')addBM(Number(f),Number(v));else addCM(Number(f),Number(r),Number(v));
+  renderRateEditor(type);renderSuppliers();
+}
+async function readChart(type) {
+  const file=$(type+'File').files[0]; if(!file){setStatus(type,'Please choose a chart file first.','error');return;}
+  const button=$(type+'Read');button.disabled=true;setStatus(type,'Opening your file…');
+  try {
+    const ext=file.name.split('.').pop().toLowerCase();
+    if(['xlsx','xls','csv'].includes(ext)) {
+      if(!window.XLSX) await loadScript('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js');
+      const wb=XLSX.read(await file.arrayBuffer(),{type:'array'});let rows=[];
+      wb.SheetNames.forEach(name=>rows.push(...XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,raw:true})));
+      parseSpreadsheet(type,rows);renderRateEditor(type);setStatus(type,'Spreadsheet read successfully. Please verify the displayed rates.');renderSuppliers();return;
+    }
+    let imageFile=file;
+    if(ext==='pdf') {
+      if(!window.pdfjsLib) await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
+      pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      const pdf=await pdfjsLib.getDocument({data:await file.arrayBuffer()}).promise;
+      const page=await pdf.getPage(1);
+      // First try native PDF text extraction: this is much faster and more accurate than OCR for exported spreadsheets.
+      const content=await page.getTextContent();
+      const grouped=new Map();
+      for(const item of content.items) {
+        if(!item.str || !item.str.trim()) continue;
+        const y=Math.round(item.transform[5]*2)/2;
+        if(!grouped.has(y)) grouped.set(y,[]);
+        grouped.get(y).push({x:item.transform[4],text:item.str.trim()});
+      }
+      const pdfText=[...grouped.entries()].sort((a,b)=>b[0]-a[0]).map(([y,items])=>items.sort((a,b)=>a.x-b.x).map(x=>x.text).join(' ')).join('\\n');
+      if(pdfText.trim()) {
+        try {
+          parseOCR(type,pdfText);
+          if((type==='bm'?buffaloRates.size:cowRates.size)>0) {
+            renderRateEditor(type);
+            setStatus(type,'PDF text extracted directly (fast mode). Verify every displayed rate.','warn');
+            renderSuppliers();
+            return;
+          }
+        } catch(e) { /* Fall back to OCR image rendering below. */ }
+      }
+      const viewport=page.getViewport({scale:2}),canvas=document.createElement('canvas'),ctx=canvas.getContext('2d');
+      canvas.width=viewport.width;canvas.height=viewport.height;
+      await page.render({canvasContext:ctx,viewport}).promise;
+      imageFile=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));
+    }
+    if(!window.Tesseract) await loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js');
+    setStatus(type,'Loading OCR engine (first use only), then reading chart…');
+    const worker=await Tesseract.createWorker('eng',1,{workerPath:'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js',corePath:'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1',langPath:'https://tessdata.projectnaptha.com/4.0.0',logger:m=>{if(m.status==='recognizing text')setStatus(type,'Reading chart: '+Math.round((m.progress||0)*100)+'%');}});
+    const result=await worker.recognize(imageFile);await worker.terminate();
+    const text=result.data.text||'';
+    parseOCR(type,text);renderRateEditor(type);
+    $(type+'Editor').insertAdjacentHTML('afterbegin','<details style="margin:8px 0"><summary class="help">Show / correct raw OCR text</summary><textarea id="'+type+'RawOCR"></textarea><button id="'+type+'Reparse" class="alt">Re-read corrected text</button></details>');
+    $(type+'RawOCR').value=text;
+    $(type+'Reparse').addEventListener('click',()=>{try{parseOCR(type,$(type+'RawOCR').value);renderRateEditor(type);setStatus(type,'Corrected OCR text parsed. Verify all rates.','warn');renderSuppliers();}catch(e){setStatus(type,e.message,'error')}});
+    setStatus(type,'Photo/PDF read finished: '+(type==='bm'?buffaloRates.size:cowRates.size)+' rates detected. Verify every value before using for payment.','warn');
+    renderSuppliers();
+  } catch(err) { setStatus(type,err.message||'Could not read this chart. Try a clearer image or Excel/CSV.','error'); }
+  finally { button.disabled=false; }
+}
+function newSupplier(i){return{name:'Supplier '+(i+1),type:'Buffalo',days:Array.from({length:10},()=>({fat:'',snf:'',litres:''}))};}
+function makeSuppliers(){const n=Math.max(1,Math.min(200,Number($('supplierCount').value)||1));suppliers=Array.from({length:n},(_,i)=>newSupplier(i));renderSuppliers();}
+function addSupplier(){suppliers.push(newSupplier(suppliers.length));$('supplierCount').value=suppliers.length;renderSuppliers();}
+function getRate(s,d){const f=round1(d.fat);if(s.type==='Buffalo')return buffaloRates.get(f)??null;return cowRates.get(f+'|'+round1(d.snf))??null;}
+function getTotals(s){let litres=0,amount=0,weightedFat=0,weightedSnf=0,missing=0;s.days.forEach(d=>{const l=Number(d.litres)||0;if(l<=0)return;litres+=l;weightedFat+=(Number(d.fat)||0)*l;if(s.type==='Cow')weightedSnf+=(Number(d.snf)||0)*l;const rate=getRate(s,d);if(rate===null)missing++;else amount+=rate*l;});return{litres,amount,avgFat:litres?weightedFat/litres:0,avgSnf:litres?weightedSnf/litres:0,missing};}
+function renderSuppliers(){
+  const root=$('suppliers');root.innerHTML='';
+  suppliers.forEach((s,i)=>{
+    const t=getTotals(s),rows=s.days.map((d,j)=>{const r=getRate(s,d),l=Number(d.litres)||0;return '<tr><td>'+(j+1)+'</td><td><input type="number" step=".1" value="'+esc(d.fat)+'" data-s="'+i+'" data-day="'+j+'" data-field="fat" placeholder="Fat"></td>'+(s.type==='Cow'?'<td><input type="number" step=".1" value="'+esc(d.snf)+'" data-s="'+i+'" data-day="'+j+'" data-field="snf" placeholder="SNF"></td>':'')+'<td><input type="number" min="0" step=".01" value="'+esc(d.litres)+'" data-s="'+i+'" data-day="'+j+'" data-field="litres" placeholder="Litres"></td><td>'+(r===null?'<span class="bad">Rate missing</span>':fmt(r))+'</td><td>'+(r===null||!l?'—':fmt(r*l))+'</td></tr>';}).join('');
+    const div=document.createElement('div');div.className='supplier';
+    div.innerHTML='<div class="row"><div class="field"><label>Supplier name</label><input data-sname="'+i+'" value="'+esc(s.name)+'"></div><div class="field"><label>Milk type</label><select data-stype="'+i+'"><option value="Buffalo" '+(s.type==='Buffalo'?'selected':'')+'>Buffalo</option><option value="Cow" '+(s.type==='Cow'?'selected':'')+'>Cow</option></select></div><div><b>'+fmt(t.amount)+'</b><div class="help">'+t.litres.toFixed(2)+' litres total</div></div><button class="alt" data-print="'+i+'">Print individual bill</button><button class="red" data-remove="'+i+'">Remove</button></div><div class="table-wrap"><table><thead><tr><th>Day</th><th>Fat %</th>'+(s.type==='Cow'?'<th>SNF</th>':'')+'<th>Litres</th><th>Given value</th><th>Amount</th></tr></thead><tbody>'+rows+'</tbody></table></div><p class="help">'+(t.missing?'<span class="bad">'+t.missing+' day(s) have missing rates. Their amounts are excluded until the chart rate is available.</span>':'Rates match the uploaded chart.')+'</p>';
+    root.appendChild(div);
+  });
+  root.querySelectorAll('[data-sname]').forEach(el=>el.addEventListener('change',()=>{suppliers[Number(el.dataset.sname)].name=el.value;}));
+  root.querySelectorAll('[data-stype]').forEach(el=>el.addEventListener('change',()=>{suppliers[Number(el.dataset.stype)].type=el.value;renderSuppliers();}));
+  root.querySelectorAll('[data-s][data-field]').forEach(el=>el.addEventListener('change',()=>{suppliers[Number(el.dataset.s)].days[Number(el.dataset.day)][el.dataset.field]=el.value;renderSuppliers();}));
+  root.querySelectorAll('[data-print]').forEach(el=>el.addEventListener('click',()=>printSupplier(Number(el.dataset.print))));
+  root.querySelectorAll('[data-remove]').forEach(el=>el.addEventListener('click',()=>{suppliers.splice(Number(el.dataset.remove),1);$('supplierCount').value=suppliers.length;renderSuppliers();}));
+  renderSummary();
+}
+function renderSummary(){
+  const b={litres:0,amount:0,fat:0,missing:0},c={litres:0,amount:0,fat:0,snf:0,missing:0};
+  suppliers.forEach(s=>{const t=getTotals(s),o=s.type==='Buffalo'?b:c;o.litres+=t.litres;o.amount+=t.amount;o.fat+=t.avgFat*t.litres;o.missing+=t.missing;if(s.type==='Cow')o.snf+=t.avgSnf*t.litres;});
+  const totalL=b.litres+c.litres,totalA=b.amount+c.amount;
+  $('metrics').innerHTML=[['Buffalo litres',b.litres.toFixed(2)+' L'],['Buffalo amount',fmt(b.amount)],['Cow litres',c.litres.toFixed(2)+' L'],['Cow amount',fmt(c.amount)],['Grand total litres',totalL.toFixed(2)+' L'],['Grand total amount',fmt(totalA)]].map(x=>'<div class="metric"><small>'+x[0]+'</small><strong>'+x[1]+'</strong></div>').join('');
+  $('summaryTable').innerHTML='<table><thead><tr><th>Milk type</th><th>Total litres</th><th>Weighted avg fat</th><th>Weighted avg SNF</th><th>Total amount</th><th>Missing-rate days</th></tr></thead><tbody><tr><td>Buffalo</td><td>'+b.litres.toFixed(2)+'</td><td>'+(b.litres?(b.fat/b.litres).toFixed(2)+'%':'—')+'</td><td>—</td><td>'+fmt(b.amount)+'</td><td>'+b.missing+'</td></tr><tr><td>Cow</td><td>'+c.litres.toFixed(2)+'</td><td>'+(c.litres?(c.fat/c.litres).toFixed(2)+'%':'—')+'</td><td>'+(c.litres?(c.snf/c.litres).toFixed(2)+'%':'—')+'</td><td>'+fmt(c.amount)+'</td><td>'+c.missing+'</td></tr><tr><th>Grand total</th><th>'+totalL.toFixed(2)+'</th><th>—</th><th>—</th><th>'+fmt(totalA)+'</th><th>'+(b.missing+c.missing)+'</th></tr></tbody></table><p class="help">Payments are calculated day by day using exact uploaded chart rates × litres. No interpolation or estimated rates are used. A missing rate is excluded from the total and flagged.</p>';
+}
+function printSupplier(i){
+  const s=suppliers[i],t=getTotals(s);
+  const rows=s.days.map((d,j)=>{const r=getRate(s,d),l=Number(d.litres)||0;return '<tr><td>'+(j+1)+'</td><td>'+esc(d.fat||'—')+'</td>'+(s.type==='Cow'?'<td>'+esc(d.snf||'—')+'</td>':'')+'<td>'+esc(d.litres||'—')+'</td><td>'+(r===null?'MISSING':fmt(r))+'</td><td>'+(r===null||!l?'—':fmt(r*l))+'</td></tr>';}).join('');
+  const w=window.open('','_blank');if(!w){alert('Please allow pop-ups to print the bill.');return;}
+  w.document.write('<!doctype html><html><head><title>Supplier Bill</title><style>body{font:14px Arial;padding:25px}h1{color:#145b3e}table{border-collapse:collapse;width:100%}td,th{border:1px solid #bbb;padding:8px;text-align:center}th{background:#edf5ef}</style></head><body><h1>Milk Center – 10 Days Bill</h1><h2>'+esc(s.name)+' ('+s.type+')</h2><p>Total litres: '+t.litres.toFixed(2)+' | Total amount: '+fmt(t.amount)+'</p><table><tr><th>Day</th><th>Fat</th>'+(s.type==='Cow'?'<th>SNF</th>':'')+'<th>Litres</th><th>Given value</th><th>Amount</th></tr>'+rows+'</table><p>Missing-rate days: '+t.missing+'</p></body></html>');
+  w.document.close();w.focus();w.print();
+}
+$('bmRead').addEventListener('click',()=>readChart('bm'));
+$('cmRead').addEventListener('click',()=>readChart('cm'));
+$('createSuppliers').addEventListener('click',makeSuppliers);
+$('addSupplier').addEventListener('click',addSupplier);
+$('printAll').addEventListener('click',()=>window.print());
+makeSuppliers();
+})();
+</script></body></html>
